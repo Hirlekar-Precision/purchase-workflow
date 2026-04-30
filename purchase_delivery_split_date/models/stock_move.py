@@ -47,22 +47,39 @@ class StockMove(models.Model):
             if picking.printed:
                 # Do not split by date anymore
                 continue
-            # todo: if all moves on the same date
             moves = self.browse().concat(*moves_list)
-            # the picking is not valid anymore
+            other_moves = picking.move_ids - moves
+
+            if not other_moves:
+                # All moves on this picking are changing date — check if we
+                # can just re-date the picking instead of cancel+recreate.
+                domain = moves[0].with_context(
+                    purchase_delivery_split_date=True,
+                )._search_picking_for_assignation_domain()
+                domain.append(("id", "!=", picking.id))
+                existing = self.env["stock.picking"].search(domain, limit=1)
+                if not existing:
+                    picking.scheduled_date = new_deadline
+                    picking.date_deadline = new_deadline
+                    continue
+
             reserved_moves = moves.filtered(
                 lambda m: m.state in ("partially_available", "assigned")
             )
             reserved_moves._do_unreserve()
+            # _do_unreserve skips moves/lines with picked=True — detach those
+            # lines explicitly so they don't stay on a cancelled picking.
+            remaining_lines = moves.move_line_ids
             moves.picking_id = False
+            remaining_lines.picking_id = False
             if picking.move_ids:
-                # recompute the picking dates as some moves have been
-                # removed
                 picking._compute_scheduled_date()
                 picking._compute_date_deadline()
             else:
                 picking.state = "cancel"
             moves.with_context(purchase_delivery_split_date=True)._assign_picking()
+            for move in moves:
+                move.move_line_ids.picking_id = move.picking_id
             reserved_moves._action_assign()
 
     def _get_new_picking_values(self):
