@@ -37,6 +37,11 @@ class StockMove(models.Model):
         return res
 
     def _purchase_split_by_date(self, new_deadline):
+        # Hirlekar patch: a cleared deadline (falsy) has no day to split by, and
+        # _purchase_split_date_get_group_keys would do `False.astimezone(...)`
+        # (AttributeError: 'bool' object has no attribute 'astimezone'). Skip.
+        if not new_deadline:
+            return
         po_moves = self.filtered(
             lambda m: m.purchase_line_id and m.state not in ("done", "cancel")
         )
